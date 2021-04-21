@@ -60,6 +60,26 @@ import net.runelite.client.plugins.inferno.displaymodes.InfernoZukShieldDisplayM
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
 import org.apache.commons.lang3.ArrayUtils;
+import java.awt.AWTException;
+import java.awt.Color;
+import java.awt.Rectangle;
+import java.awt.Robot;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import net.runelite.api.Prayer;
+import net.runelite.api.Skill;
+import net.runelite.api.VarClientInt;
+import net.runelite.api.util.Text;
+import net.runelite.api.vars.InterfaceTab;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetItem;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.input.KeyManager;
+import net.runelite.client.plugins.PluginDependency;
+import net.runelite.client.plugins.externals.utils.ExtUtils;
+import net.runelite.client.plugins.externals.utils.Tab;
+import net.runelite.client.util.ColorUtil;
+import net.runelite.client.util.HotkeyListener;
 import org.pf4j.Extension;
 
 @Extension
@@ -70,12 +90,19 @@ import org.pf4j.Extension;
 	tags = {"combat", "overlay", "pve", "pvm"}
 )
 @Slf4j
+@PluginDependency(ExtUtils.class)
 public class InfernoPlugin extends Plugin
 {
 	private static final int INFERNO_REGION = 9043;
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private ExtUtils utils;
+
+	@Inject
+    private EventBus eventBus;
 
 	@Inject
 	private OverlayManager overlayManager;
@@ -178,6 +205,9 @@ public class InfernoPlugin extends Plugin
 	public static final int JALTOK_JAD_RANGE_ATTACK = 7593;
 	public static final int TZKAL_ZUK = 7566;
 
+	private ExecutorService executor;
+	private Robot robot;
+
 	@Provides
 	InfernoConfig provideConfig(ConfigManager configManager)
 	{
@@ -203,6 +233,8 @@ public class InfernoPlugin extends Plugin
 			overlayManager.add(jadOverlay);
 			overlayManager.add(prayerOverlay);
 		}
+		executor = Executors.newSingleThreadExecutor();
+		robot = new Robot();
 	}
 
 	@Override
@@ -216,6 +248,8 @@ public class InfernoPlugin extends Plugin
 		infoBoxManager.removeInfoBox(spawnTimerInfoBox);
 
 		currentWaveNumber = -1;
+		executor.shutdown();
+		robot = null;
 	}
 
 	@Subscribe
@@ -259,6 +293,7 @@ public class InfernoPlugin extends Plugin
 
 		closestAttack = null;
 		calculateClosestAttack();
+		handlePrayer();
 
 		safeSpotMap.clear();
 		calculateSafespots();
@@ -592,6 +627,79 @@ public class InfernoPlugin extends Plugin
 				}
 			}
 		}
+	}
+
+	private void handlePrayer()
+	{
+		if (closestAttack == InfernoNPC.Attack.MAGIC)
+		{
+			clickPrayer(Prayer.PROTECT_FROM_MAGIC);
+		}
+		else if (closestAttack == InfernoNPC.Attack.RANGED)
+		{
+			clickPrayer(Prayer.PROTECT_FROM_MISSILES);
+		}
+		else if (closestAttack == InfernoNPC.Attack.MELEE)
+		{
+			clickPrayer(Prayer.PROTECT_FROM_MELEE);
+		}
+	}
+
+	private void clickPrayer(Prayer prayer)
+	{
+		if (client.isPrayerActive(prayer) || client.getBoostedSkillLevel(Skill.PRAYER) < 1)
+		{
+			return;
+		}
+
+		final Widget widget = client.getWidget(prayer.getWidgetInfo());
+
+		if (widget == null)
+		{
+			return;
+		}
+
+		final Rectangle bounds = widget.getBounds();
+
+		executor.submit(() ->
+		{
+			if (client.getVar(VarClientInt.INVENTORY_TAB) != InterfaceTab.PRAYER.getId())
+			{
+				robot.keyPress(utils.getTabHotkey(Tab.PRAYER));
+				try
+				{
+					Thread.sleep(20);
+				}
+				catch (InterruptedException e)
+				{
+					return;
+				}
+			}
+
+			utils.click(bounds);
+
+			try
+			{
+				Thread.sleep(getMillis());
+			}
+			catch (InterruptedException e)
+			{
+				return;
+			}
+
+			if (client.isPrayerActive(prayer))
+			{
+				robot.keyPress(utils.getTabHotkey(Tab.INVENTORY));
+			}
+
+			try
+			{
+				Thread.sleep(getMillis());
+			}
+			catch (InterruptedException ignored)
+			{
+			}
+		});
 	}
 
 	private void calculateSafespots()
